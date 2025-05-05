@@ -24,35 +24,117 @@ REG.NO:212223230236
 ## Write a C program that illustrates two processes communicating using shared memory.
 ```
 #include <stdio.h>
-#include <sys/ipc.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <sys/shm.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
-int main()
-{
-	// Generate a unique key using ftok
-	key_t key = ftok("shmfile", 65);
+#define TEXT_SZ 2048  // Shared memory size
 
-	// Get an identifier for the shared memory segment using shmget
-	int shmid = shmget(key, 1024, 0666 | IPC_CREAT);
-      printf("Shared memory id = %d \n",shmid);
-// Attach to the shared memory segment using shmat
-	char* str = (char*)shmat(shmid, (void*)0, 0);
-	
-    printf("Write Data : ");
-	fgets(str, 1024, stdin);
+struct shared_use_st {
+    int written;  
+    char some_text[TEXT_SZ];
+};
 
-	printf("Data written in memory: %s\n", str);
+int main() {
+    int shmid;
+    void *shared_memory = (void *)0;
+    struct shared_use_st *shared_stuff;
 
-	// Detach from the shared memory segment using shmdt
-	shmdt(str);
+    // Create shared memory
+    shmid = shmget((key_t)1234, sizeof(struct shared_use_st), 0666 | IPC_CREAT);
+    if (shmid == -1) {
+        fprintf(stderr, "shmget failed\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Print the shared memory ID in a predictable format
+    printf("Shared memory id = %d\n", shmid);
+    
+    // Attach to shared memory
+    shared_memory = shmat(shmid, (void *)0, 0);
+    if (shared_memory == (void *)-1) {
+        fprintf(stderr, "shmat failed\n");
+        exit(EXIT_FAILURE);
+    }
+    printf("Memory attached at %p\n", shared_memory);
+    
+    shared_stuff = (struct shared_use_st *)shared_memory;
+    shared_stuff->written = 0;
 
-	return 0;
+    pid_t pid = fork();
+    
+    if (pid < 0) {
+        fprintf(stderr, "Fork failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) {  // Child process (Consumer)
+        while (1) {
+            while (shared_stuff->written == 0) {
+                sleep(1); // Wait for producer
+            }
+
+            printf("Consumer received: %s", shared_stuff->some_text);
+
+            if (strncmp(shared_stuff->some_text, "end", 3) == 0) {
+                break;
+            }
+
+            shared_stuff->written = 0; // Reset for producer
+        }
+
+        // Detach shared memory
+        if (shmdt(shared_memory) == -1) {
+            fprintf(stderr, "shmdt failed\n");
+            exit(EXIT_FAILURE);
+        }
+        exit(EXIT_SUCCESS);
+    } else {  // Parent process (Producer)
+        char buffer[TEXT_SZ];
+
+        while (1) {
+            printf("Enter Some Text: ");
+            fgets(buffer, TEXT_SZ, stdin);
+
+            strncpy(shared_stuff->some_text, buffer, TEXT_SZ);
+            shared_stuff->written = 1;
+            printf(shared_stuff->some_text);
+
+            if (strncmp(buffer, "end", 3) == 0) {
+                break;
+            }
+
+            while (shared_stuff->written == 1) {
+                sleep(1); // Wait for consumer
+            }
+        }
+
+        // Wait for child process (consumer) to finish
+        wait(NULL);
+
+        // Detach and remove shared memory
+        if (shmdt(shared_memory) == -1) {
+            fprintf(stderr, "shmdt failed\n");
+            exit(EXIT_FAILURE);
+        }
+        
+        if (shmctl(shmid, IPC_RMID, 0) == -1) {
+            fprintf(stderr, "shmctl failed\n");
+            exit(EXIT_FAILURE);
+        }
+
+        exit(EXIT_SUCCESS);
+    }
 }
+
 ```
 
 ## OUTPUT
 
-![image](https://github.com/user-attachments/assets/d4bc6ce8-7de7-41ca-8465-c874e52e129d)
+![WhatsApp Image 2025-05-05 at 17 16 40_5f33f4af](https://github.com/user-attachments/assets/02e0cfb5-9d5c-4f5c-8f54-1aa80a54c198)
 
 # RESULT:
 The program is executed successfully.
